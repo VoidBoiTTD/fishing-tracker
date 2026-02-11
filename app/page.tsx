@@ -3,30 +3,85 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
+type LeaderboardEntry = {
+  user_id: string
+  username: string
+  total_points: number
+  email: string
+}
+
 export default function HomePage() {
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [score, setScore] = useState(0)
-  const [leaderboard, setLeaderboard] = useState<any[]>([])
+  const [username, setUsername] = useState('')
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
 
-  // Check user on load
+  // --- Auth Check ---
   useEffect(() => {
     checkUser()
-    loadLeaderboard()
+    supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+      if (session?.user) loadUsername(session.user.id)
+    })
   }, [])
 
   async function checkUser() {
     const { data } = await supabase.auth.getUser()
     setUser(data.user)
     setLoading(false)
+    if (data.user) loadUsername(data.user.id)
+    loadLeaderboard()
   }
 
-  // Login with magic link
+  // --- Username functions ---
+  async function loadUsername(userId: string) {
+    const { data } = await supabase
+      .from('profiles')
+      .select('username')
+      .eq('id', userId)
+      .single()
+    if (data?.username) setUsername(data.username)
+  }
+
+  async function saveUsername() {
+    if (!username) return
+    await supabase
+      .from('profiles')
+      .upsert({ id: user.id, username })
+    alert('Username updated!')
+    loadLeaderboard()
+  }
+
+  // --- Leaderboard ---
+  async function loadLeaderboard() {
+    const { data } = await supabase
+      .from('leaderboard_view')
+      .select('*')
+      .order('total_points', { ascending: false })
+    if (data) setLeaderboard(data as LeaderboardEntry[])
+  }
+
+  // --- Signup / Login ---
+  async function signUp() {
+    const email = prompt('Enter email:')
+    const password = prompt('Enter password:')
+    if (!email || !password) return
+
+    const { data, error } = await supabase.auth.signUp({ email, password })
+    if (error) alert(error.message)
+    else {
+      alert('Signup successful! Please login.')
+    }
+  }
+
   async function login() {
-    const email = prompt('Enter email')
-    if (!email) return
-    await supabase.auth.signInWithOtp({ email })
-    alert('Check your email for the login link!')
+    const email = prompt('Enter email:')
+    const password = prompt('Enter password:')
+    if (!email || !password) return
+
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) alert(error.message)
+    else setUser(data.user)
   }
 
   async function logout() {
@@ -34,96 +89,119 @@ export default function HomePage() {
     setUser(null)
   }
 
-  // Log a fishing event
-  async function logEvent(points: number, type: string) {
+  // --- Logging events ---
+  async function logEvent(event_type: string, points: number) {
     if (!user) return
     await supabase.from('logs').insert({
       user_id: user.id,
-      event_type: type,
+      event_type,
       points,
+      username
     })
-    setScore(score + points)
     loadLeaderboard()
   }
 
-  // Load leaderboard from Supabase view
-  async function loadLeaderboard() {
-    const { data } = await supabase
-      .from('leaderboard_view')
-      .select('*')
-      .order('total_points', { ascending: false })
-    setLeaderboard(data || [])
-  }
-
+  // --- Render ---
   if (loading) return <div className="p-10">Loading...</div>
 
-  // Not logged in
   if (!user) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex flex-col items-center justify-center h-screen gap-4">
         <button
           onClick={login}
-          className="bg-blue-500 px-6 py-3 rounded-xl text-lg"
+          className="bg-blue-500 px-6 py-3 rounded-xl text-lg text-white"
         >
           Login
+        </button>
+        <button
+          onClick={signUp}
+          className="bg-green-500 px-6 py-3 rounded-xl text-lg text-white"
+        >
+          Sign Up
         </button>
       </div>
     )
   }
 
-  // Logged in → show dashboard
   return (
-    <div className="max-w-xl mx-auto p-6 space-y-6">
-      <h1 className="text-3xl font-bold">Fishing Tracker</h1>
-      <p>Welcome, {user.email}</p>
-      <div className="text-xl">Session Score: {score}</div>
-
-      <div className="grid grid-cols-2 gap-4">
+    <div className="p-6 max-w-2xl mx-auto">
+      <div className="flex justify-between items-center mb-4">
+        <h1 className="text-2xl font-bold">Fishing Tracker</h1>
         <button
-          onClick={() => logEvent(1, 'fish')}
-          className="bg-green-600 p-4 rounded-xl"
+          onClick={logout}
+          className="bg-red-500 text-white px-3 py-1 rounded"
+        >
+          Logout
+        </button>
+      </div>
+
+      {/* Username Editor */}
+      <div className="mb-6">
+        <label className="block mb-1">Username:</label>
+        <input
+          type="text"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          className="border px-2 py-1 rounded text-black"
+        />
+        <button
+          onClick={saveUsername}
+          className="bg-blue-500 text-white px-3 py-1 rounded ml-2"
+        >
+          Save
+        </button>
+      </div>
+
+      {/* Score Buttons */}
+      <div className="flex gap-2 mb-6 flex-wrap">
+        <button
+          onClick={() => logEvent('fish', 1)}
+          className="bg-green-500 text-white px-4 py-2 rounded"
         >
           +1 Fish
         </button>
         <button
-          onClick={() => logEvent(3, 'pb')}
-          className="bg-purple-600 p-4 rounded-xl"
+          onClick={() => logEvent('pb', 3)}
+          className="bg-yellow-500 text-white px-4 py-2 rounded"
         >
           PB Fish +3
         </button>
         <button
-          onClick={() => logEvent(-1, 'line_snap')}
-          className="bg-red-600 p-4 rounded-xl"
+          onClick={() => logEvent('line_snap', -1)}
+          className="bg-gray-500 text-white px-4 py-2 rounded"
         >
           Line Snap -1
         </button>
         <button
-          onClick={() => logEvent(-1, 'dud_trip')}
-          className="bg-orange-600 p-4 rounded-xl"
+          onClick={() => logEvent('dud_trip', -1)}
+          className="bg-gray-700 text-white px-4 py-2 rounded"
         >
           Dud Trip -1
         </button>
       </div>
 
-      <h2 className="text-xl mt-6 mb-2">Leaderboard</h2>
-      <div className="space-y-2">
-        {leaderboard.map((u, i) => (
-          <div
-            key={i}
-            className="flex justify-between bg-slate-800 p-3 rounded"
-          >
-            <span>{u.email}</span>
-            <span>{u.total_points} pts</span>
-          </div>
-        ))}
+      {/* Leaderboard */}
+      <div>
+        <h2 className="text-xl font-bold mb-2">Leaderboard</h2>
+        <table className="w-full text-left border-collapse border border-gray-300">
+          <thead>
+            <tr className="border-b">
+              <th className="p-2 border-r">Rank</th>
+              <th className="p-2 border-r">Username</th>
+              <th className="p-2">Points</th>
+            </tr>
+          </thead>
+          <tbody>
+            {leaderboard.map((u, i) => (
+              <tr key={u.user_id} className="border-b hover:bg-gray-100">
+                <td className="p-2 border-r">{i + 1}</td>
+                <td className="p-2 border-r">{u.username || u.email}</td>
+                <td className="p-2">{u.total_points}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-
-      <button
-        onClick={logout}
-        className="bg-slate-700 px-4 py-2 rounded mt-6"
-      >
-        Logout
-      </button>
     </div>
   )
 }
