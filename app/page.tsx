@@ -61,10 +61,8 @@ export default function HomePage() {
     }
 
     console.log('Updated profile:', updatedProfile)
-
-    // Reload leaderboard immediately
-    await loadLeaderboard()
     alert('Username updated!')
+    // No need to call loadLeaderboard() here — Realtime will handle it
   }
 
   // --- Leaderboard ---
@@ -81,6 +79,43 @@ export default function HomePage() {
 
     setLeaderboard(data as LeaderboardEntry[])
   }
+
+  // --- Realtime subscriptions ---
+  useEffect(() => {
+    if (!user) return
+
+    // Subscribe to logs updates
+    const logsSub = supabase
+      .channel('public:logs')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'logs' },
+        (payload) => {
+          console.log('Logs change detected:', payload)
+          loadLeaderboard()
+        }
+      )
+      .subscribe()
+
+    // Subscribe to profiles updates
+    const profilesSub = supabase
+      .channel('public:profiles')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles' },
+        (payload) => {
+          console.log('Profile change detected:', payload)
+          loadLeaderboard()
+        }
+      )
+      .subscribe()
+
+    // Cleanup subscriptions on unmount
+    return () => {
+      supabase.removeChannel(logsSub)
+      supabase.removeChannel(profilesSub)
+    }
+  }, [user])
 
   // --- Signup / Login ---
   async function signUp() {
@@ -117,7 +152,7 @@ export default function HomePage() {
       points,
       username
     })
-    loadLeaderboard()
+    // Realtime handles leaderboard update
   }
 
   // --- Render ---
