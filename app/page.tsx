@@ -15,6 +15,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true)
   const [username, setUsername] = useState('')
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
+  const [message, setMessage] = useState('')
 
   // --- Auth Check ---
   useEffect(() => {
@@ -33,7 +34,7 @@ export default function HomePage() {
     loadLeaderboard()
   }
 
-  // --- Username functions ---
+  // --- Username ---
   async function loadUsername(userId: string) {
     const { data, error } = await supabase
       .from('profiles')
@@ -50,35 +51,40 @@ export default function HomePage() {
 
     const oldUsername = username
 
-    // --- Optimistic UI update ---
+    // Optimistic UI: update leaderboard row immediately
     setLeaderboard((prev) =>
       prev.map((entry) =>
         entry.user_id === user.id ? { ...entry, username } : entry
       )
     )
 
-    // Update DB
-    const { data, error } = await supabase
+    // Inline message
+    setMessage('Saving username...')
+
+    // Update Supabase
+    const { error } = await supabase
       .from('profiles')
       .upsert({ id: user.id, username })
       .select()
 
     if (error) {
       console.error('Failed to update username:', error)
-      alert('Failed to update username')
-      // Rollback optimistic update
+      setMessage('Failed to update username')
+      // rollback optimistic update
       setLeaderboard((prev) =>
         prev.map((entry) =>
           entry.user_id === user.id ? { ...entry, username: oldUsername } : entry
         )
       )
+      setTimeout(() => setMessage(''), 2000)
       return
     }
 
-    console.log('Updated profile:', data)
-    // Refresh leaderboard to catch view updates
-    await loadLeaderboard()
-    alert('Username updated!')
+    // Delay leaderboard reload to ensure view updates
+    setTimeout(loadLeaderboard, 200)
+
+    setMessage('Username updated!')
+    setTimeout(() => setMessage(''), 2000)
   }
 
   // --- Leaderboard ---
@@ -93,34 +99,37 @@ export default function HomePage() {
       return
     }
 
-    setLeaderboard(data as LeaderboardEntry[])
+    // Add flash flag for animation
+    setLeaderboard((prev) =>
+      (data as LeaderboardEntry[]).map((entry) => {
+        const oldEntry = prev.find((e) => e.user_id === entry.user_id)
+        return {
+          ...entry,
+          flash: oldEntry && (oldEntry.total_points !== entry.total_points || oldEntry.username !== entry.username)
+        }
+      })
+    )
   }
 
   // --- Realtime subscriptions ---
   useEffect(() => {
     if (!user) return
 
-    // Listen to logs table (points changes)
     const logsSub = supabase
       .channel('public:logs')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'logs' },
-        () => {
-          loadLeaderboard()
-        }
+        () => loadLeaderboard()
       )
       .subscribe()
 
-    // Listen to profiles table (username changes)
     const profilesSub = supabase
       .channel('public:profiles')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'profiles' },
-        () => {
-          loadLeaderboard()
-        }
+        () => loadLeaderboard()
       )
       .subscribe()
 
@@ -137,8 +146,9 @@ export default function HomePage() {
     if (!email || !password) return
 
     const { error } = await supabase.auth.signUp({ email, password })
-    if (error) alert(error.message)
-    else alert('Signup successful! Please login.')
+    if (error) setMessage(error.message)
+    else setMessage('Signup successful! Please login.')
+    setTimeout(() => setMessage(''), 2000)
   }
 
   async function login() {
@@ -147,8 +157,9 @@ export default function HomePage() {
     if (!email || !password) return
 
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) alert(error.message)
+    if (error) setMessage(error.message)
     else setUser(data.user)
+    setTimeout(() => setMessage(''), 2000)
   }
 
   async function logout() {
@@ -160,6 +171,15 @@ export default function HomePage() {
   async function logEvent(event_type: string, points: number) {
     if (!user) return
 
+    // Optimistic update
+    setLeaderboard((prev) =>
+      prev.map((entry) =>
+        entry.user_id === user.id
+          ? { ...entry, total_points: entry.total_points + points, flash: true }
+          : entry
+      )
+    )
+
     const { error } = await supabase.from('logs').insert({
       user_id: user.id,
       event_type,
@@ -167,19 +187,7 @@ export default function HomePage() {
       username
     })
 
-    if (error) {
-      console.error('Failed to log event:', error)
-      return
-    }
-
-    // Immediate refresh for the user clicking
-    setLeaderboard((prev) =>
-      prev.map((entry) =>
-        entry.user_id === user.id
-          ? { ...entry, total_points: entry.total_points + points }
-          : entry
-      )
-    )
+    if (error) console.error('Failed to log event:', error)
   }
 
   // --- Render ---
@@ -188,6 +196,7 @@ export default function HomePage() {
   if (!user) {
     return (
       <div className="flex flex-col items-center justify-center h-screen gap-4">
+        {message && <div className="text-green-600">{message}</div>}
         <button
           onClick={login}
           className="bg-blue-500 px-6 py-3 rounded-xl text-lg text-white"
@@ -206,6 +215,8 @@ export default function HomePage() {
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
+      {message && <div className="text-green-600 mb-2">{message}</div>}
+
       <div className="flex justify-between items-center mb-4">
         <h1 className="text-2xl font-bold">Fishing Tracker</h1>
         <button
@@ -274,7 +285,19 @@ export default function HomePage() {
           </thead>
           <tbody>
             {leaderboard.map((u, i) => (
-              <tr key={u.user_id} className="border-b hover:bg-gray-100">
+              <tr
+                key={u.user_id}
+                className={`border-b hover:bg-gray-100 ${
+                  u.flash ? 'flash' : u.user_id === user.id ? 'bg-green-100' : ''
+                }`}
+                onAnimationEnd={() =>
+                  setLeaderboard((prev) =>
+                    prev.map((entry) =>
+                      entry.user_id === u.user_id ? { ...entry, flash: false } : entry
+                    )
+                  )
+                }
+              >
                 <td className="p-2 border-r">{i + 1}</td>
                 <td className="p-2 border-r">{u.username || u.email}</td>
                 <td className="p-2">{u.total_points}</td>
