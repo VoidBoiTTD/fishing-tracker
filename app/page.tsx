@@ -3,11 +3,13 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
+// --- Add optional flash property ---
 type LeaderboardEntry = {
   user_id: string
   username: string
   total_points: number
   email: string
+  flash?: boolean // <-- FIXED: TypeScript now knows about this
 }
 
 export default function HomePage() {
@@ -51,17 +53,15 @@ export default function HomePage() {
 
     const oldUsername = username
 
-    // Optimistic UI: update leaderboard row immediately
+    // Optimistic UI update
     setLeaderboard((prev) =>
       prev.map((entry) =>
-        entry.user_id === user.id ? { ...entry, username } : entry
+        entry.user_id === user.id ? { ...entry, username, flash: true } : entry
       )
     )
 
-    // Inline message
     setMessage('Saving username...')
 
-    // Update Supabase
     const { error } = await supabase
       .from('profiles')
       .upsert({ id: user.id, username })
@@ -70,19 +70,18 @@ export default function HomePage() {
     if (error) {
       console.error('Failed to update username:', error)
       setMessage('Failed to update username')
-      // rollback optimistic update
+      // rollback
       setLeaderboard((prev) =>
         prev.map((entry) =>
-          entry.user_id === user.id ? { ...entry, username: oldUsername } : entry
+          entry.user_id === user.id ? { ...entry, username: oldUsername, flash: false } : entry
         )
       )
       setTimeout(() => setMessage(''), 2000)
       return
     }
 
-    // Delay leaderboard reload to ensure view updates
+    // Refresh leaderboard
     setTimeout(loadLeaderboard, 200)
-
     setMessage('Username updated!')
     setTimeout(() => setMessage(''), 2000)
   }
@@ -99,13 +98,15 @@ export default function HomePage() {
       return
     }
 
-    // Add flash flag for animation
+    // Add flash flag if points or username changed
     setLeaderboard((prev) =>
       (data as LeaderboardEntry[]).map((entry) => {
         const oldEntry = prev.find((e) => e.user_id === entry.user_id)
         return {
           ...entry,
-          flash: oldEntry && (oldEntry.total_points !== entry.total_points || oldEntry.username !== entry.username)
+          flash:
+            oldEntry &&
+            (oldEntry.total_points !== entry.total_points || oldEntry.username !== entry.username)
         }
       })
     )
