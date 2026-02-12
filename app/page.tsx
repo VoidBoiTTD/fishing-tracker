@@ -9,7 +9,7 @@ type LeaderboardEntry = {
   username: string
   total_points: number
   email: string
-  flash?: boolean // <-- FIXED: TypeScript now knows about this
+  flash?: boolean
 }
 
 export default function HomePage() {
@@ -98,7 +98,6 @@ export default function HomePage() {
       return
     }
 
-    // Add flash flag if points or username changed
     setLeaderboard((prev) =>
       (data as LeaderboardEntry[]).map((entry) => {
         const oldEntry = prev.find((e) => e.user_id === entry.user_id)
@@ -289,7 +288,11 @@ export default function HomePage() {
               <tr
                 key={u.user_id}
                 className={`border-b hover:bg-gray-100 ${
-                  u.flash ? 'flash' : u.user_id === user.id ? 'bg-green-100' : ''
+                  u.flash
+                    ? 'flash'
+                    : u.user_id === user.id
+                    ? 'bg-green-100 text-black font-semibold'
+                    : ''
                 }`}
                 onAnimationEnd={() =>
                   setLeaderboard((prev) =>
