@@ -35,30 +35,51 @@ export default function HomePage() {
 
   // --- Username functions ---
   async function loadUsername(userId: string) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('profiles')
       .select('username')
       .eq('id', userId)
       .single()
+
+    if (error) console.error('Failed to load username:', error)
     if (data?.username) setUsername(data.username)
   }
 
   async function saveUsername() {
-    if (!username) return
-    await supabase
+    if (!username || !user) return
+
+    // Update username and get the updated row back
+    const { data: updatedProfile, error: updateError } = await supabase
       .from('profiles')
       .upsert({ id: user.id, username })
+      .select()
+
+    if (updateError) {
+      console.error('Failed to update username:', updateError)
+      alert('Failed to update username')
+      return
+    }
+
+    console.log('Updated profile:', updatedProfile)
+
+    // Reload leaderboard immediately
+    await loadLeaderboard()
     alert('Username updated!')
-    loadLeaderboard()
   }
 
   // --- Leaderboard ---
   async function loadLeaderboard() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('leaderboard_view')
       .select('*')
       .order('total_points', { ascending: false })
-    if (data) setLeaderboard(data as LeaderboardEntry[])
+
+    if (error) {
+      console.error('Failed to load leaderboard:', error)
+      return
+    }
+
+    setLeaderboard(data as LeaderboardEntry[])
   }
 
   // --- Signup / Login ---
@@ -69,9 +90,7 @@ export default function HomePage() {
 
     const { data, error } = await supabase.auth.signUp({ email, password })
     if (error) alert(error.message)
-    else {
-      alert('Signup successful! Please login.')
-    }
+    else alert('Signup successful! Please login.')
   }
 
   async function login() {
