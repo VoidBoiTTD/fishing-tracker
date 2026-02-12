@@ -48,21 +48,37 @@ export default function HomePage() {
   async function saveUsername() {
     if (!username || !user) return
 
-    // Update username and get the updated row back
-    const { data: updatedProfile, error: updateError } = await supabase
+    const oldUsername = username
+
+    // --- Optimistic UI update ---
+    setLeaderboard((prev) =>
+      prev.map((entry) =>
+        entry.user_id === user.id ? { ...entry, username } : entry
+      )
+    )
+
+    // Update DB
+    const { data, error } = await supabase
       .from('profiles')
       .upsert({ id: user.id, username })
       .select()
 
-    if (updateError) {
-      console.error('Failed to update username:', updateError)
+    if (error) {
+      console.error('Failed to update username:', error)
       alert('Failed to update username')
+      // Rollback optimistic update
+      setLeaderboard((prev) =>
+        prev.map((entry) =>
+          entry.user_id === user.id ? { ...entry, username: oldUsername } : entry
+        )
+      )
       return
     }
 
-    console.log('Updated profile:', updatedProfile)
+    console.log('Updated profile:', data)
+    // Refresh leaderboard to catch view updates
+    await loadLeaderboard()
     alert('Username updated!')
-    // No need to call loadLeaderboard() here — Realtime will handle it
   }
 
   // --- Leaderboard ---
@@ -84,33 +100,30 @@ export default function HomePage() {
   useEffect(() => {
     if (!user) return
 
-    // Subscribe to logs updates
+    // Listen to logs table (points changes)
     const logsSub = supabase
       .channel('public:logs')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'logs' },
-        (payload) => {
-          console.log('Logs change detected:', payload)
+        () => {
           loadLeaderboard()
         }
       )
       .subscribe()
 
-    // Subscribe to profiles updates
+    // Listen to profiles table (username changes)
     const profilesSub = supabase
       .channel('public:profiles')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'profiles' },
-        (payload) => {
-          console.log('Profile change detected:', payload)
+        () => {
           loadLeaderboard()
         }
       )
       .subscribe()
 
-    // Cleanup subscriptions on unmount
     return () => {
       supabase.removeChannel(logsSub)
       supabase.removeChannel(profilesSub)
@@ -123,7 +136,7 @@ export default function HomePage() {
     const password = prompt('Enter password:')
     if (!email || !password) return
 
-    const { data, error } = await supabase.auth.signUp({ email, password })
+    const { error } = await supabase.auth.signUp({ email, password })
     if (error) alert(error.message)
     else alert('Signup successful! Please login.')
   }
@@ -146,13 +159,27 @@ export default function HomePage() {
   // --- Logging events ---
   async function logEvent(event_type: string, points: number) {
     if (!user) return
-    await supabase.from('logs').insert({
+
+    const { error } = await supabase.from('logs').insert({
       user_id: user.id,
       event_type,
       points,
       username
     })
-    // Realtime handles leaderboard update
+
+    if (error) {
+      console.error('Failed to log event:', error)
+      return
+    }
+
+    // Immediate refresh for the user clicking
+    setLeaderboard((prev) =>
+      prev.map((entry) =>
+        entry.user_id === user.id
+          ? { ...entry, total_points: entry.total_points + points }
+          : entry
+      )
+    )
   }
 
   // --- Render ---
